@@ -5,9 +5,11 @@ from dash import html, dcc, dash_table, Patch, ALL, ctx
 from dash.dependencies import Input, Output, State
 from pathlib import Path
 import pandas as pd
+import plotly.graph_objects as go
 import plotly.express as px
 import dash_bootstrap_components as dbc
 import numpy as np
+import copy
 
 from containers import logo_title, create_radio_container, select_sample_project, \
     create_color_by_children, create_color_by_container, create_sort_by_children, \
@@ -27,6 +29,7 @@ project_folder = 'assets/samples/sample'
 csv = Path(__file__).parent.joinpath('assets', 'samples', 'sample', 'data.csv')
 df = pd.read_csv(csv)
 df_records = df.to_dict('records')
+df_series = df.to_dict('series')
 
 labels, parameters, input_columns, output_columns, image_columns = \
     process_dataframe(df)
@@ -72,13 +75,17 @@ app.layout = dbc.Container([
     create_color_by_container(parameters, color_by),
     dcc.Store(id='project-folder', data=project_folder),
     dcc.Store(id='df', data=df_records),
+    dcc.Store(id='df-series', data=df_series),
     dcc.Store(id='df-columns', data=df.columns),
     dcc.Store(id='labels', data=labels),
     dcc.Store(id='parameters', data=parameters),
     dcc.Store(id='img-column', data=img_column),
     dcc.Store(id='active-filters', data={}),
     dcc.Store(id='active-records', data=df_records),
+    dcc.Store(id='selected-record'),
+    dcc.Store(id='selected-record-index'),
     dcc.Store(id='parallel-coordinates-figure-highlight', data={}),
+    dcc.Graph(id='parallel-coordinates-highlight', figure=fig),
     dcc.Store(id='parallel-coordinates-figure', data=fig),
     dcc.Graph(id='parallel-coordinates', figure=fig),
     create_sort_by_container(parameters, sort_by),
@@ -225,8 +232,63 @@ def update_color_by(n_clicks, df_records, labels, figure):
 
 
 @app.callback(
+    Output('parallel-coordinates-highlight', 'figure'),
+    [Input('selected-record', 'data'),
+     State('selected-record-index', 'data'),
+     State('df-series', 'data'),
+     State('parallel-coordinates', 'figure'),
+     State('color-by-column', 'data')],
+    prevent_initial_call=True
+)
+def rtrhtrj(selected_record, selected_record_index, df_series, figure, color_by_column):
+    fff = go.Figure(figure['data'], figure['layout'])
+    #print(fff)
+    # border_color = px.colors.sample_colorscale(
+    #     'plasma', samplepoints=samplepoints
+    # )[0]
+    values = df_series[color_by_column]
+    minimum = min(values)
+    maximum = max(values)
+    samplepoints = np.interp(df_series[color_by_column][selected_record_index], [minimum, maximum], [0, 1])
+    line_color = px.colors.sample_colorscale(
+        'plasma', samplepoints=samplepoints
+    )[0]
+    print(line_color)
+    print(fff)
+    #fff.update_coloraxes(showscale=False)
+    #print(fff)
+    color = [None] * len(values)
+    color[selected_record_index] = line_color
+    #print(color)
+    #new_fig = Patch()
+    #figure['data'][0]['line']['color'] = color
+    #figure['layout']['coloraxis']['showscale'] = False
+    new_trace = copy.deepcopy(figure['data'][0])
+    for dimension in new_trace['dimensions']:
+        dimension['range'] = [min(dimension['values']), max(dimension['values'])]
+        dimension['values'] = [dimension['values'][selected_record_index]]
+    new_trace['line']['color'] = [values[selected_record_index]]
+    new_trace['line']['cmin'] = minimum
+    new_trace['line']['cmax'] = maximum
+    #new_trace['line']['coloraxis'] = None
+    print(new_trace)
+    figure['data'].insert(0, new_trace)
+    figure['data'][1]['line']['color'] = 'rgb(220, 220, 220)'
+    #figure['data'][1]['line']['coloraxis'] = None
+    for dimension in figure['data'][1]['dimensions']:
+        dimension['values'].pop(selected_record_index)
+    print(go.Figure(figure))
+    return figure
+    # new_fig['data'][0]['dimensions'] = figure['data'][0]['dimensions']
+    # new_fig['data'][0]['line']['color'] = None
+
+
+
+@app.callback(
     [Output('selected-image-data', 'data'),
-     Output('selected-image-info', 'children')],
+     Output('selected-image-info', 'children'),
+     Output('selected-record', 'data'),
+     Output('selected-record-index', 'data')],
     [Input({'image': ALL}, 'n_clicks'),
      State('df', 'data'),
      State('labels', 'data'),
@@ -244,6 +306,7 @@ def update_clicked_image_grid(n_clicks, df_records, labels, img_column, paramete
     image_id = ctx.triggered_id.image
     dff = pd.DataFrame.from_records(df_records)
     selected_df = dff.loc[dff[img_column] == image_id]
+    selected_record_index = selected_df.index[0]
     select_image_info = []
     record = selected_df.to_dict('records')
     for label in labels:
@@ -253,7 +316,7 @@ def update_clicked_image_grid(n_clicks, df_records, labels, img_column, paramete
                 f'{record[0][label]}'
                 ])
         )
-    return record, select_image_info
+    return record, select_image_info, record, selected_record_index
 
 
 @app.callback(
